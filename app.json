@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "FamilyBudget",
+    "slug": "FamilyBudget",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.josh_bsd_23.FamilyBudget"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-build-properties"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "4a248941-d194-4a5b-94f7-d698721b7cd4"
+      }
+    }
+  }
+}
