@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Vibration, SafeAreaView,
+  View, Text, TouchableOpacity, StyleSheet, Vibration, SafeAreaView, Image,
 } from 'react-native';
 import { COLORS, PIN } from '../constants';
 
@@ -35,7 +35,7 @@ export default function PinScreen({ onUnlock }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <Text style={styles.logo}>💰</Text>
+      <Image source={require('../../assets/icon.png')} style={styles.logo} />
       <Text style={styles.title}>Family Budget</Text>
       <Text style={styles.sub}>Enter your PIN to continue</Text>
 
@@ -69,7 +69,7 @@ export default function PinScreen({ onUnlock }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  logo: { fontSize: 40, marginBottom: 10 },
+  logo: { width: 80, height: 80, borderRadius: 18, marginBottom: 10 },
   title: { fontSize: 24, fontWeight: '700', color: COLORS.text, marginBottom: 4 },
   sub: { fontSize: 14, color: COLORS.text3, marginBottom: 40 },
   dots: { flexDirection: 'row', gap: 16, marginBottom: 12 },

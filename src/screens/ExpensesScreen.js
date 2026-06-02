@@ -26,6 +26,7 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
   const [cat, setCat] = useState('');
   const [sub, setSub] = useState('');
   const [who, setWho] = useState('Me');
+  const [expenseDate, setExpenseDate] = useState(new Date());
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -44,6 +45,15 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
     setMonth(m); setYear(y);
   }
 
+  function changeExpenseDay(delta) {
+    setExpenseDate(prev => {
+      const d = new Date(prev);
+      d.setDate(d.getDate() + delta);
+      const today = new Date(); today.setHours(23, 59, 59, 999);
+      return d > today ? prev : d;
+    });
+  }
+
   // Group by day
   const byDay = {};
   [...filtered].sort((a, b) => {
@@ -59,8 +69,8 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
     if (!amount || parseFloat(amount) <= 0) { Alert.alert('Enter a valid amount'); return; }
     if (!cat) { Alert.alert('Select a category'); return; }
     setSaving(true);
-    const now = new Date();
-    const dateStr = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+    const d = expenseDate;
+    const dateStr = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
     const entry = {
       date: dateStr,
       description: desc || sub || cat,
@@ -68,12 +78,12 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
       subcategory: sub,
       amount: parseFloat(amount),
       paidBy: who,
-      month,
-      year,
+      month: d.getMonth(),
+      year: d.getFullYear(),
     };
     try {
       await saveExpense(entry);
-      onAdd({ ...entry, desc: entry.description, cat, subcat: sub, who, month, year });
+      onAdd({ ...entry, desc: entry.description, cat, subcat: sub, who, month: d.getMonth(), year: d.getFullYear() });
       setModal(false);
       resetForm();
     } catch {
@@ -83,7 +93,7 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
   }
 
   function resetForm() {
-    setAmount(''); setDesc(''); setCat(''); setSub(''); setWho('Me');
+    setAmount(''); setDesc(''); setCat(''); setSub(''); setWho('Me'); setExpenseDate(new Date());
   }
 
   const onPullRefresh = useCallback(async () => {
@@ -91,6 +101,8 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
     await onRefresh();
     setRefreshing(false);
   }, [onRefresh]);
+
+  const isToday = expenseDate.toDateString() === new Date().toDateString();
 
   return (
     <View style={styles.container}>
@@ -104,6 +116,10 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
           <TouchableOpacity style={styles.navBtn} onPress={() => changeMonth(1)}>
             <Text style={styles.navArrow}>›</Text>
           </TouchableOpacity>
+        </View>
+        <View style={styles.totalRow}>
+          <Text style={styles.totalLabel}>TOTAL SPENT</Text>
+          <Text style={styles.totalAmt}>{fmt(needs + wants + sav)}</Text>
         </View>
         <View style={styles.summary}>
           <View style={[styles.summaryCard, { backgroundColor: COLORS.needsBg }]}>
@@ -172,6 +188,25 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
           <View style={styles.modal}>
             <Text style={styles.modalTitle}>Add Expense</Text>
 
+            <Text style={styles.label}>DATE</Text>
+            <View style={styles.dateRow}>
+              <TouchableOpacity style={styles.dateArrowBtn} onPress={() => changeExpenseDay(-1)}>
+                <Text style={styles.dateArrow}>‹</Text>
+              </TouchableOpacity>
+              <Text style={styles.dateText}>
+                {isToday
+                  ? `Today, ${expenseDate.getDate()} ${MONTHS[expenseDate.getMonth()]}`
+                  : `${expenseDate.getDate()} ${MONTHS[expenseDate.getMonth()]} ${expenseDate.getFullYear()}`}
+              </Text>
+              <TouchableOpacity
+                style={[styles.dateArrowBtn, isToday && styles.dateArrowDisabled]}
+                onPress={() => changeExpenseDay(1)}
+                disabled={isToday}
+              >
+                <Text style={[styles.dateArrow, isToday && { color: COLORS.border }]}>›</Text>
+              </TouchableOpacity>
+            </View>
+
             <Text style={styles.label}>AMOUNT (₹)</Text>
             <TextInput style={[styles.input, { fontSize: 22 }]} keyboardType="numeric" placeholder="0" value={amount} onChangeText={setAmount} />
 
@@ -228,6 +263,9 @@ const styles = StyleSheet.create({
   navBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: COLORS.surface2, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
   navArrow: { fontSize: 20, color: COLORS.text2 },
   monthTitle: { fontSize: 17, fontWeight: '600', color: COLORS.text },
+  totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  totalLabel: { fontSize: 11, fontWeight: '700', color: COLORS.text3, letterSpacing: 0.8 },
+  totalAmt: { fontSize: 18, fontWeight: '700', color: COLORS.text },
   summary: { flexDirection: 'row', gap: 8 },
   summaryCard: { flex: 1, padding: 10, borderRadius: 8, alignItems: 'center' },
   summaryLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 0.8, marginBottom: 3 },
@@ -252,6 +290,11 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 17, fontWeight: '700', color: COLORS.text, textAlign: 'center', marginBottom: 18 },
   label: { fontSize: 11, fontWeight: '700', color: COLORS.text2, letterSpacing: 0.6, marginBottom: 6, marginTop: 4 },
   input: { borderWidth: 1.5, borderColor: COLORS.border, borderRadius: 10, padding: 11, fontSize: 15, color: COLORS.text, backgroundColor: COLORS.bg, marginBottom: 10 },
+  dateRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1.5, borderColor: COLORS.border, borderRadius: 10, backgroundColor: COLORS.bg, marginBottom: 10, overflow: 'hidden' },
+  dateArrowBtn: { paddingHorizontal: 14, paddingVertical: 10 },
+  dateArrowDisabled: { opacity: 0.3 },
+  dateArrow: { fontSize: 22, color: COLORS.text2 },
+  dateText: { fontSize: 14, fontWeight: '500', color: COLORS.text, textAlign: 'center', flex: 1 },
   pills: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   pill: { flex: 1, padding: 9, borderRadius: 8, borderWidth: 1.5, borderColor: COLORS.border, backgroundColor: COLORS.surface2, alignItems: 'center' },
   pillText: { fontSize: 12, fontWeight: '600', color: COLORS.text2 },

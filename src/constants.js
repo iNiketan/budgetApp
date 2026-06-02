@@ -1,6 +1,6 @@
-export const SHEET_URL = 'https://script.google.com/macros/s/AKfycbybDGmyGAi3j0acMtTUX2cF9IuIRrWm8UyEB4SiBlINX7i69td9ii3fbw8Y9IBkKW4P/exec';
-export const PASSWORD = 'nikes2026budget';
-export const PIN = '2580';
+export const SHEET_URL = process.env.EXPO_PUBLIC_SHEET_URL;
+export const PASSWORD = process.env.EXPO_PUBLIC_PASSWORD;
+export const PIN = process.env.EXPO_PUBLIC_PIN;
 
 export const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
