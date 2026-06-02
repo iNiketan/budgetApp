@@ -11,6 +11,9 @@ yarn-error.log*
 .env.production
 .env.development
 
+# IDE / editor
+.claude/
+
 # build artifacts
 *.apk
 *.aab
