@@ -61,6 +61,29 @@ function toInt(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Prevent CSV / Spreadsheet Formula Injection.
+ * Characters =, +, -, @, \t, or \r at the start of a cell can cause Google Sheets
+ * to interpret user input as an active executable formula.
+ * Prepending a single quote ensures Google Sheets treats the value strictly as plain text.
+ */
+export function sanitizeSheetString(val) {
+  if (typeof val !== 'string') return val == null ? '' : String(val);
+  const trimmed = val.trim();
+  if (/^[=+\-@\t\r]/.test(trimmed)) {
+    return `'${trimmed}`;
+  }
+  return trimmed;
+}
+
+export function desanitizeSheetString(val) {
+  if (typeof val !== 'string') return val == null ? '' : String(val);
+  if (/^'[=+\-@\t\r]/.test(val)) {
+    return val.slice(1);
+  }
+  return val;
+}
+
 export async function fetchExpenses() {
   const json = await callBackend(`${SHEET_URL}?password=${encodeURIComponent(PASSWORD)}`);
 
@@ -71,11 +94,11 @@ export async function fetchExpenses() {
 
     return {
       date: row['Date'] || '',
-      desc: row['Description'] || '',
+      desc: desanitizeSheetString(row['Description'] || ''),
       cat: String(row['Category'] || '').trim().toLowerCase(),
-      subcat: row['Subcategory'] || '',
+      subcat: desanitizeSheetString(row['Subcategory'] || ''),
       amount: Number.parseFloat(row['Amount']) || 0,
-      who: row['Paid By'] || 'Me',
+      who: desanitizeSheetString(row['Paid By'] || 'Me'),
       // Fall back to the Date column: a blank Month/Year cell previously became
       // 0 and made the row permanently invisible to both screens' year filter.
       month: month !== null ? month : (parsed ? parsed.month : 0),
@@ -88,10 +111,17 @@ export async function fetchExpenses() {
 }
 
 export async function saveExpense(entry) {
+  const sanitized = {
+    ...entry,
+    description: sanitizeSheetString(entry.description || ''),
+    category: sanitizeSheetString(entry.category || ''),
+    subcategory: sanitizeSheetString(entry.subcategory || ''),
+    paidBy: sanitizeSheetString(entry.paidBy || ''),
+  };
   await callBackend(SHEET_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify({ ...entry, password: PASSWORD }),
+    body: JSON.stringify({ ...sanitized, password: PASSWORD }),
   });
   return true;
 }

@@ -92,8 +92,16 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
       Alert.alert('Missing amount', 'Enter an amount greater than zero.');
       return;
     }
+    if (parsedAmount > 100_000_000) {
+      Alert.alert('Invalid amount', 'Amount exceeds the maximum limit (₹10,00,00,000).');
+      return;
+    }
     if (!cat) {
       Alert.alert('Missing category', 'Pick Needs, Wants or Savings.');
+      return;
+    }
+    if (desc && desc.trim().length > 200) {
+      Alert.alert('Description too long', 'Description must be 200 characters or fewer.');
       return;
     }
 
