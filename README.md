@@ -16,7 +16,7 @@ A shared family expense tracker for Android. Two users log daily expenses that s
 
 | Layer | Tech |
 |---|---|
-| Framework | React Native (Expo SDK 54) |
+| Framework | React Native (Expo SDK 57) |
 | Navigation | React Navigation 6 (Bottom Tabs) |
 | Charts | react-native-svg |
 | Local storage | AsyncStorage |

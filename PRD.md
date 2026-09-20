@@ -18,7 +18,7 @@ There is also an HTML version of the same app hosted on Netlify, used as a web f
 
 | Layer | Technology |
 |---|---|
-| Mobile App | React Native (Expo SDK 54) |
+| Mobile App | React Native (Expo SDK 57) |
 | Build Tool | EAS Build (Expo Application Services) |
 | Navigation | React Navigation v6 (Bottom Tabs) |
 | Local Storage | AsyncStorage (@react-native-async-storage) |
@@ -349,7 +349,7 @@ the wrong number.
 
 *Last updated: September 2026*
 *App version: 1.0.0*
-*Built with Expo SDK 54 / React Native 0.81*
+*Built with Expo SDK 57 / React Native 0.86*
 
 ## 15. Environment Variables
 
