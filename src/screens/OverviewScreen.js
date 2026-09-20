@@ -1,53 +1,63 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, ScrollView, TextInput, StyleSheet, Dimensions,
+  View, Text, ScrollView, TextInput, StyleSheet,
 } from 'react-native';
+import Svg, { Circle, G } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, MONTHS } from '../constants';
+import {
+  fmt, summarize, monthOf, savingsFromIncome, savingsBarPct, trailingTrend, breakdown as breakdownOf,
+} from '../summary';
 
-const W = Dimensions.get('window').width;
+const DONUT_SIZE = 130;
+const DONUT_STROKE = 18;
 
-function fmt(n) { return '₹' + Math.round(n).toLocaleString('en-IN'); }
+/**
+ * Proportional donut. The previous version stacked three full rings and set
+ * `opacity` on each, which blended the colours instead of drawing arcs — the
+ * ring looked the same regardless of the actual split.
+ */
+function DonutChart({ needs, wants, savings, allocated }) {
+  const r = (DONUT_SIZE - DONUT_STROKE) / 2;
+  const cx = DONUT_SIZE / 2;
+  const cy = DONUT_SIZE / 2;
+  const circumference = 2 * Math.PI * r;
 
-function DonutChart({ needs, wants, sav, total }) {
-  const size = 130, cx = size / 2, cy = size / 2, r = 48, lw = 18;
   const slices = [
-    { v: needs, color: COLORS.needs },
-    { v: wants, color: COLORS.wants },
-    { v: sav, color: COLORS.savings },
+    { key: 'needs', v: needs, color: COLORS.needs },
+    { key: 'wants', v: wants, color: COLORS.wants },
+    { key: 'savings', v: savings, color: COLORS.savings },
   ].filter(s => s.v > 0);
 
-  if (total === 0) {
-    return (
-      <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-        <View style={{ width: r * 2, height: r * 2, borderRadius: r, borderWidth: lw, borderColor: '#E8E5DE' }} />
-        <View style={{ position: 'absolute' }}>
-          <Text style={styles.donutTotal}>₹0</Text>
-          <Text style={styles.donutLbl}>spent</Text>
-        </View>
-      </View>
-    );
-  }
+  let acc = 0;
+  const arcs = slices.map(s => {
+    const frac = allocated > 0 ? s.v / allocated : 0;
+    const arc = { ...s, dash: frac * circumference, offset: acc * circumference };
+    acc += frac;
+    return arc;
+  });
 
-  // Use SVG-like approach with multiple arcs via View transforms
   return (
-    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{ width: r * 2 + lw, height: r * 2 + lw, borderRadius: r + lw / 2, overflow: 'hidden', position: 'relative' }}>
-        {slices.map((s, i) => {
-          const pct = s.v / total;
-          return (
-            <View key={i} style={{
-              position: 'absolute', inset: 0,
-              borderWidth: lw, borderColor: s.color,
-              borderRadius: r + lw / 2,
-              opacity: pct,
-            }} />
-          );
-        })}
-      </View>
-      <View style={{ position: 'absolute', alignItems: 'center' }}>
-        <Text style={styles.donutTotal}>{fmt(total)}</Text>
-        <Text style={styles.donutLbl}>spent</Text>
+    <View style={{ width: DONUT_SIZE, height: DONUT_SIZE, alignItems: 'center', justifyContent: 'center' }}>
+      <Svg width={DONUT_SIZE} height={DONUT_SIZE}>
+        <G rotation={-90} originX={cx} originY={cy}>
+          <Circle cx={cx} cy={cy} r={r} stroke="#E8E5DE" strokeWidth={DONUT_STROKE} fill="none" />
+          {arcs.map(a => (
+            <Circle
+              key={a.key}
+              cx={cx} cy={cy} r={r}
+              stroke={a.color}
+              strokeWidth={DONUT_STROKE}
+              fill="none"
+              strokeDasharray={`${a.dash} ${circumference - a.dash}`}
+              strokeDashoffset={-a.offset}
+            />
+          ))}
+        </G>
+      </Svg>
+      <View style={styles.donutCenter}>
+        <Text style={styles.donutTotal}>{fmt(allocated)}</Text>
+        <Text style={styles.donutLbl}>tracked</Text>
       </View>
     </View>
   );
@@ -66,37 +76,31 @@ export default function OverviewScreen({ expenses }) {
   }
 
   const now = new Date();
-  const thisMonth = expenses.filter(e => e.month === now.getMonth() && e.year === now.getFullYear());
-  let needs = 0, wants = 0, sav = 0;
-  thisMonth.forEach(e => {
-    if (e.cat === 'needs') needs += e.amount;
-    else if (e.cat === 'wants') wants += e.amount;
-    else sav += e.amount;
-  });
-  const total = needs + wants + sav;
-  const inc = parseFloat(income) || 0;
-  const saved = inc > 0 ? Math.max(0, inc - total) : 0;
-  const savedPct = inc > 0 ? Math.round((saved / inc) * 100) : 0;
-  const savingsBarWidth = Math.min(savedPct / 20 * 100, 100);
+  const thisMonth = monthOf(expenses, now.getMonth(), now.getFullYear());
+  const { needs, wants, savings, allocated, spent } = summarize(thisMonth);
 
-  // 6 month trend
-  const trendMonths = [];
-  for (let i = 5; i >= 0; i--) {
-    let m = now.getMonth() - i, y = now.getFullYear();
-    if (m < 0) { m += 12; y--; }
-    const t = expenses.filter(e => e.month === m && e.year === y).reduce((s, e) => s + e.amount, 0);
-    trendMonths.push({ label: MONTHS[m].slice(0, 3), total: t, isCurrent: i === 0 });
-  }
+  // `saved` is income minus real spending. Savings-category entries are money
+  // you kept, so they must not be subtracted here.
+  const { saved, pct: savedPct } = savingsFromIncome(income, spent);
+  const barPct = savingsBarPct(savedPct);
+  const inc = Number(income) || 0;
+  const overspent = inc > 0 && saved < 0;
+
+  const trendMonths = trailingTrend(expenses, now).map(m => ({
+    label: MONTHS[m.month].slice(0, 3),
+    total: m.total,
+    isCurrent: m.isCurrent,
+  }));
   const maxTrend = Math.max(...trendMonths.map(m => m.total), 1);
 
-  // Category breakdown
-  const sub = {};
-  thisMonth.forEach(e => {
-    const key = e.subcat || (e.cat === 'needs' ? 'Other needs' : e.cat === 'wants' ? 'Other wants' : 'Other savings');
-    sub[key] = (sub[key] || 0) + e.amount;
-  });
-  const breakdown = Object.entries(sub).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const breakdown = breakdownOf(thisMonth, 5);
   const maxBreak = Math.max(...breakdown.map(e => e[1]), 1);
+
+  function heroSubText() {
+    if (inc <= 0) return 'Enter income above to see %';
+    if (overspent) return `Over income by ${fmt(-saved)} · target is 20%`;
+    return `${savedPct}% of income · target is 20%`;
+  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 14, paddingBottom: 60 }}>
@@ -124,38 +128,41 @@ export default function OverviewScreen({ expenses }) {
       </View>
 
       {/* Savings hero */}
-      <View style={styles.savingsHero}>
-        <Text style={styles.savingsHeroLabel}>SAVED THIS MONTH</Text>
-        <Text style={styles.savingsHeroAmt}>{fmt(saved)}</Text>
-        <Text style={styles.savingsHeroSub}>
-          {inc > 0 ? `${savedPct}% of income · target is 20%` : 'Enter income above to see %'}
+      <View style={[styles.savingsHero, overspent && styles.savingsHeroOver]}>
+        <Text style={styles.savingsHeroLabel}>
+          {overspent ? 'OVERSPENT THIS MONTH' : 'SAVED THIS MONTH'}
         </Text>
+        <Text style={styles.savingsHeroAmt}>{fmt(saved)}</Text>
+        <Text style={styles.savingsHeroSub}>{heroSubText()}</Text>
         <View style={styles.savingsBar}>
-          <View style={[styles.savingsBarFill, { width: `${savingsBarWidth}%` }]} />
+          <View style={[styles.savingsBarFill, { width: `${barPct}%` }]} />
         </View>
       </View>
 
       {/* Donut */}
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>THIS MONTH'S SPEND</Text>
+        <Text style={styles.sectionTitle}>THIS MONTH'S ALLOCATION</Text>
         <View style={styles.donutWrap}>
-          <DonutChart needs={needs} wants={wants} sav={sav} total={total} />
+          <DonutChart needs={needs} wants={wants} savings={savings} allocated={allocated} />
           <View style={styles.donutLegend}>
             {[
               { label: 'Needs', v: needs, c: COLORS.needs },
               { label: 'Wants', v: wants, c: COLORS.wants },
-              { label: 'Savings', v: sav, c: COLORS.savings },
+              { label: 'Savings', v: savings, c: COLORS.savings },
             ].map(s => (
               <View key={s.label} style={styles.legendRow}>
                 <View style={styles.legendLeft}>
                   <View style={[styles.legendDot, { backgroundColor: s.c }]} />
                   <Text style={styles.legendLabel}>{s.label}</Text>
                 </View>
-                <Text style={styles.legendPct}>{total > 0 ? Math.round(s.v / total * 100) : 0}%</Text>
+                <Text style={styles.legendPct}>{allocated > 0 ? Math.round(s.v / allocated * 100) : 0}%</Text>
               </View>
             ))}
           </View>
         </View>
+        <Text style={styles.donutFootNote}>
+          Spending this month: {fmt(spent)}
+        </Text>
       </View>
 
       {/* Trend */}
@@ -204,14 +211,17 @@ const styles = StyleSheet.create({
   incomeLabel: { fontSize: 13, color: COLORS.text3 },
   budgetHint: { fontSize: 11, color: COLORS.text3, marginTop: 10, lineHeight: 18 },
   savingsHero: { backgroundColor: COLORS.accent, borderRadius: 16, padding: 18, marginBottom: 12 },
+  savingsHeroOver: { backgroundColor: COLORS.wants },
   savingsHeroLabel: { fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.65)', letterSpacing: 0.8, marginBottom: 6 },
   savingsHeroAmt: { fontSize: 32, fontWeight: '700', color: 'white', marginBottom: 3 },
   savingsHeroSub: { fontSize: 12, color: 'rgba(255,255,255,0.65)', marginBottom: 14 },
   savingsBar: { height: 5, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 3 },
   savingsBarFill: { height: 5, backgroundColor: 'rgba(255,255,255,0.75)', borderRadius: 3 },
   donutWrap: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  donutCenter: { position: 'absolute', alignItems: 'center' },
   donutTotal: { fontSize: 16, fontWeight: '700', color: COLORS.text, textAlign: 'center' },
   donutLbl: { fontSize: 10, color: COLORS.text3, textAlign: 'center' },
+  donutFootNote: { fontSize: 11, color: COLORS.text3, marginTop: 12 },
   donutLegend: { flex: 1 },
   legendRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   legendLeft: { flexDirection: 'row', alignItems: 'center', gap: 7 },

@@ -6,11 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
     "ios": {
       "supportsTablet": true
     },
@@ -25,12 +20,22 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-build-properties"
+      "expo-build-properties",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ],
+      "expo-status-bar"
     ],
     "extra": {
       "eas": {
-        "projectId": "4a248941-d194-4a5b-94f7-d698721b7cd4"
+        "projectId": "e70269dd-5d69-4684-b1fa-fec805cc0ffd"
       }
-    }
+    },
+    "owner": "iniketan"
   }
 }
