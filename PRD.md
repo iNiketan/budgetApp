@@ -18,7 +18,7 @@ There is also an HTML version of the same app hosted on Netlify, used as a web f
 
 | Layer | Technology |
 |---|---|
-| Mobile App | React Native (Expo SDK 49) |
+| Mobile App | React Native (Expo SDK 54) |
 | Build Tool | EAS Build (Expo Application Services) |
 | Navigation | React Navigation v6 (Bottom Tabs) |
 | Local Storage | AsyncStorage (@react-native-async-storage) |
@@ -26,6 +26,8 @@ There is also an HTML version of the same app hosted on Netlify, used as a web f
 | Data Store | Google Sheets |
 | Web Version | Vanilla HTML + CSS + JS (single file) |
 | Web Hosting | Netlify |
+| Charts | react-native-svg |
+| Tests | Jest + jest-expo |
 
 ---
 
@@ -33,18 +35,22 @@ There is also an HTML version of the same app hosted on Netlify, used as a web f
 
 ```
 budgetApp/
-├── App.js                          # Root component, handles PIN gate + navigation
+├── App.js                          # Root component: PIN gate, expense state, sync loop
 ├── index.js                        # Expo entry point
+├── babel.config.js                 # babel-preset-expo (also used by Jest)
 ├── app.json                        # Expo config
 ├── eas.json                        # EAS build config
-├── package.json                    # Dependencies
+├── package.json                    # Dependencies + jest config
 ├── src/
-│   ├── constants.js                # All shared constants (URL, PIN, colors, categories)
+│   ├── constants.js                # Config + build-time validation, colors, categories
 │   ├── api.js                      # Google Sheets API functions
+│   ├── summary.js                  # Pure budget math (no React/RN imports)
 │   └── screens/
-│       ├── PinScreen.js            # PIN lock screen (shown on app open)
+│       ├── PinScreen.js            # PIN lock screen with lockout
 │       ├── ExpensesScreen.js       # Tab 1 — expense list + add modal
 │       └── OverviewScreen.js       # Tab 2 — charts, salary, savings
+├── __tests__/summary.test.js       # Unit tests for the money math
+├── scripts/purge-git-history.sh    # One-off history scrub (see SECURITY.md)
 └── assets/                         # App icons and splash screen
 ```
 
@@ -119,14 +125,17 @@ App.js (after unlock)
     │      - Pull-to-refresh (calls onRefresh)
     │      - Floating "+ Add Expense" button
     │      - Add modal (amount, description, category, subcategory, who paid)
+    │        — scrollable body, so Save stays reachable on small screens
     │      - On save: calls saveExpense() API + optimistically updates local state
     │
     └──► Tab 2: OverviewScreen.js
            - Monthly income input (persisted via AsyncStorage key: 'salary')
            - Budget hint: shows 50/30/20 breakdown based on income
-           - Savings hero card: saved amount + percentage of income
-           - Donut chart: Needs / Wants / Savings split (drawn on Canvas)
-           - 6-month bar chart: total spending per month
+           - Savings hero card: income minus real spending (needs + wants).
+             Shows a red "OVERSPENT" state when spending exceeds income
+           - Donut chart: Needs / Wants / Savings split, drawn with
+             react-native-svg as proportional strokeDasharray arcs
+           - 6-month bar chart: spend per month (savings contributions excluded)
            - Top categories breakdown with progress bars
 ```
 
@@ -189,10 +198,26 @@ savingsBg:  '#E6EEF5'
 State lives in `App.js` and is passed as props:
 
 ```javascript
-expenses        // Array of all expense objects fetched from Google Sheet
-loadData()      // Function to re-fetch all expenses from sheet
+expenses         // Array of all expense objects fetched from Google Sheet
+loadData()       // Function to re-fetch all expenses from sheet
 handleAdd(entry) // Optimistically adds a new expense to local state
 ```
+
+### Optimistic adds and the pending list
+
+`handleAdd` appends to local state immediately after a successful write, so the
+list feels instant. `loadData` then reconciles rather than blindly replacing:
+
+- Entries in `pendingRef` that the sheet has *not* yet returned are re-appended.
+  Google Sheets has read-after-write lag, so a naive `setExpenses(data)` made a
+  just-added expense disappear from the UI for up to a full poll interval.
+- An entry that stays missing for more than 3 consecutive polls is dropped, and
+  the sync bar reports how many never reached the sheet. Otherwise a failed
+  write would keep showing as saved forever.
+- Entries are matched on date + amount + description + subcategory + payer.
+
+All derived figures (category totals, savings, trend, breakdown) come from
+`src/summary.js` rather than being recomputed inline in each screen.
 
 Each expense object shape:
 ```javascript
@@ -239,12 +264,14 @@ eas build -p android --profile preview
 ## 11. Known Issues and Constraints
 
 - **No delete expense feature** — expenses can only be deleted by editing the Google Sheet directly
-- **No edit expense feature** — same limitation
+- **No edit expense feature** — same limitation. `fetchExpenses` deliberately keeps negative amounts so a correction entry can be logged from the Sheet
 - **Month uses 0-indexed integers** — January = 0, December = 11. This matches JavaScript's `Date.getMonth()`
 - **Apps Script freezes old deployments** — if you update the Apps Script backend code, you MUST create a "New version" in Deploy → Manage Deployments, not just save. Otherwise changes don't take effect
 - **Offline mode** — the app does not queue failed requests. If there is no internet, save will throw an error and the expense is lost
 - **No pagination** — all expenses are fetched in a single call. Will become slow if the sheet grows beyond ~1000 rows
-- **Donut chart is canvas-based** — drawn manually in OverviewScreen, not using a chart library
+- **Overview has no month selector** — it is hardcoded to the current month, unlike the Expenses tab
+- **The donut is drawn with react-native-svg**, not a charting library — it is a proportional ring built from `strokeDasharray` arcs. (An earlier version stacked three full rings and varied `opacity`, which did not show proportions at all.)
+- **Secrets ship inside the APK** — Expo inlines `EXPO_PUBLIC_*` at build time. See SECURITY.md
 
 ---
 
@@ -252,10 +279,13 @@ eas build -p android --profile preview
 
 - Delete expense (swipe to delete in list)
 - Edit expense
+- Month selector on the Overview tab
 - Monthly budget limits per category with alerts
 - Offline queue — save locally and sync when back online
 - Export month as PDF
 - Recurring expenses (auto-add monthly fixed costs like rent)
+- Per-device tokens instead of one shared password (would allow revoking a lost phone)
+- Move reads to a POST body so the password stops appearing in URL logs
 - Multiple currencies
 - Dark mode
 
@@ -281,6 +311,9 @@ eas build -p android --profile preview
 When making changes to this codebase:
 
 - **Always check `src/constants.js` first** — colors, categories, PIN, URL are all there
+- **Put money math in `src/summary.js`, not in a screen** — it is pure (no React/RN imports) and unit-tested. `savings-category entries are money moved, not money spent`; `spent = needs + wants` and `saved = income - spent`. Run `npm test` after touching it
+- **Never inline a secret** — no credential belongs in a committed file. `EXPO_PUBLIC_*` values are readable from the built APK; see SECURITY.md
+- **Validate at the boundary** — `api.js` is the only place that talks to the backend. It owns the timeout, the HTTP status check and the JSON check; don't bypass it with a raw `fetch`
 - **Do not change the Google Sheet column order** — the `doGet` function maps by header name, but `doPost` uses positional `appendRow`. Adding columns must be done carefully
 - **Do not change the month encoding** — month is stored as 0-indexed integer matching JS `Date.getMonth()`
 - **Preserve the optimistic update pattern** — `handleAdd()` in App.js adds to local state immediately so the UI feels instant, without waiting for the sheet to confirm
@@ -291,7 +324,30 @@ When making changes to this codebase:
 
 ---
 
-*Last updated: May 2026*
+## 16. Testing
+
+```bash
+npm test        # jest, uses the jest-expo preset
+```
+
+`__tests__/summary.test.js` covers `src/summary.js`, which holds all the money
+math as pure functions with no React or React Native imports — that is
+deliberate, so it can be tested in plain Node without mocking.
+
+The important thing these tests pin down: **savings-category entries (SIP, FD,
+emergency fund) are money moved, not money spent.** `spent = needs + wants`,
+and `saved = income - spent`. An earlier version computed
+`saved = income - (needs + wants + savings)`, which subtracted savings
+contributions twice and understated the savings figure by exactly the amount
+that had been saved.
+
+If you add a calculation, put the pure part in `summary.js` and add a test —
+a regression there is silent, because the screen still renders, it just shows
+the wrong number.
+
+---
+
+*Last updated: September 2026*
 *App version: 1.0.0*
 *Built with Expo SDK 54 / React Native 0.81*
 
@@ -305,4 +361,15 @@ Create a `.env` file in the project root (see `.env.example` for the template):
 | `EXPO_PUBLIC_PASSWORD` | API password for the Apps Script backend |
 | `EXPO_PUBLIC_PIN` | 4-digit app unlock PIN |
 
-These are loaded automatically by Expo (SDK 52+ supports `EXPO_PUBLIC_` prefix natively). **Never commit `.env` to git.**
+These are loaded automatically by Expo (SDK 52+ supports `EXPO_PUBLIC_` prefix natively).
+
+**Never commit `.env` to git.** Run `chmod 600 .env` as well.
+
+**`EXPO_PUBLIC_` is not a secrecy mechanism.** Every one of these values is
+inlined into the JS bundle at build time and is recoverable as plain text from
+the built `.apk`. Treat any built APK as containing the sheet URL, the API
+password and the PIN. See SECURITY.md.
+
+The app validates these at startup: a missing or non-`https` `SHEET_URL`, a
+missing password, or a malformed PIN renders an explicit configuration-error
+screen rather than failing obscurely later.
