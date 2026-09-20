@@ -1,10 +1,11 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Modal, TextInput, Alert, ActivityIndicator, RefreshControl,
+  View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform,
+  Modal, TextInput, Alert, ActivityIndicator, RefreshControl, KeyboardAvoidingView,
 } from 'react-native';
 import { COLORS, MONTHS, SUBCATS } from '../constants';
 import { saveExpense } from '../api';
+import { fmt, summarize } from '../summary';
 
 const CAT_ICONS = {
   '🏠 Rent':'🏠','🛒 Groceries':'🛒','⚡ Utilities':'⚡','🚗 Transport':'🚗',
@@ -15,7 +16,21 @@ const CAT_ICONS = {
   '🏡 Home goal':'🏡','🎓 Education fund':'🎓',
 };
 
-function fmt(n) { return '₹' + Math.round(n).toLocaleString('en-IN'); }
+const CAT_META = {
+  needs: { label: 'Needs', bg: COLORS.needsBg, fg: COLORS.needs, icon: '🏠', pill: '🏠 Needs' },
+  wants: { label: 'Wants', bg: COLORS.wantsBg, fg: COLORS.wants, icon: '🎉', pill: '🎉 Wants' },
+  savings: { label: 'Savings', bg: COLORS.savingsBg, fg: COLORS.savings, icon: '💰', pill: '💰 Savings' },
+};
+const UNKNOWN_CAT = { label: 'Uncategorised', bg: COLORS.surface2, fg: COLORS.text2, icon: '💸', pill: '❔ Other' };
+
+function metaFor(cat) {
+  return CAT_META[cat] || UNKNOWN_CAT;
+}
+
+function iconFor(e) {
+  if (e.subcat && CAT_ICONS[e.subcat]) return CAT_ICONS[e.subcat];
+  return metaFor(e.cat).icon;
+}
 
 export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
   const [month, setMonth] = useState(new Date().getMonth());
@@ -30,13 +45,12 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Guards against a double-tap firing handleSave twice before React re-renders
+  // and disables the button — that logged the same expense twice.
+  const savingRef = useRef(false);
+
   const filtered = expenses.filter(e => e.month === month && e.year === year);
-  let needs = 0, wants = 0, sav = 0;
-  filtered.forEach(e => {
-    if (e.cat === 'needs') needs += e.amount;
-    else if (e.cat === 'wants') wants += e.amount;
-    else sav += e.amount;
-  });
+  const { needs, wants, savings, allocated } = summarize(filtered);
 
   function changeMonth(d) {
     let m = month + d, y = year;
@@ -65,10 +79,27 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
     byDay[d].push(e);
   });
 
+  function closeModal() {
+    setModal(false);
+    resetForm();
+  }
+
   async function handleSave() {
-    if (!amount || parseFloat(amount) <= 0) { Alert.alert('Enter a valid amount'); return; }
-    if (!cat) { Alert.alert('Select a category'); return; }
+    if (savingRef.current) return;
+
+    const parsedAmount = parseFloat(amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      Alert.alert('Missing amount', 'Enter an amount greater than zero.');
+      return;
+    }
+    if (!cat) {
+      Alert.alert('Missing category', 'Pick Needs, Wants or Savings.');
+      return;
+    }
+
+    savingRef.current = true;
     setSaving(true);
+
     const d = expenseDate;
     const dateStr = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
     const entry = {
@@ -76,20 +107,34 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
       description: desc || sub || cat,
       category: cat.charAt(0).toUpperCase() + cat.slice(1),
       subcategory: sub,
-      amount: parseFloat(amount),
+      amount: parsedAmount,
       paidBy: who,
       month: d.getMonth(),
       year: d.getFullYear(),
     };
+
     try {
       await saveExpense(entry);
-      onAdd({ ...entry, desc: entry.description, cat, subcat: sub, who, month: d.getMonth(), year: d.getFullYear() });
-      setModal(false);
-      resetForm();
-    } catch {
-      Alert.alert('Error', 'Could not save. Check your internet connection.');
+      onAdd({
+        ...entry,
+        desc: entry.description,
+        cat,
+        subcat: sub,
+        who,
+        month: d.getMonth(),
+        year: d.getFullYear(),
+      });
+      // Jump to the month we just logged into, so an entry back-dated to a
+      // previous month doesn't silently vanish from the current view.
+      setMonth(d.getMonth());
+      setYear(d.getFullYear());
+      closeModal();
+    } catch (err) {
+      Alert.alert('Could not save', (err && err.message) || 'Check your internet connection.');
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
-    setSaving(false);
   }
 
   function resetForm() {
@@ -109,17 +154,19 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
       {/* Month nav */}
       <View style={styles.header}>
         <View style={styles.monthNav}>
-          <TouchableOpacity style={styles.navBtn} onPress={() => changeMonth(-1)}>
+          <TouchableOpacity style={styles.navBtn} onPress={() => changeMonth(-1)} accessibilityLabel="Previous month">
             <Text style={styles.navArrow}>‹</Text>
           </TouchableOpacity>
           <Text style={styles.monthTitle}>{MONTHS[month]} {year}</Text>
-          <TouchableOpacity style={styles.navBtn} onPress={() => changeMonth(1)}>
+          <TouchableOpacity style={styles.navBtn} onPress={() => changeMonth(1)} accessibilityLabel="Next month">
             <Text style={styles.navArrow}>›</Text>
           </TouchableOpacity>
         </View>
         <View style={styles.totalRow}>
-          <Text style={styles.totalLabel}>TOTAL SPENT</Text>
-          <Text style={styles.totalAmt}>{fmt(needs + wants + sav)}</Text>
+          {/* "Logged", not "spent": this total includes savings contributions,
+              which are money moved, not money spent. */}
+          <Text style={styles.totalLabel}>TOTAL LOGGED</Text>
+          <Text style={styles.totalAmt}>{fmt(allocated)}</Text>
         </View>
         <View style={styles.summary}>
           <View style={[styles.summaryCard, { backgroundColor: COLORS.needsBg }]}>
@@ -132,7 +179,7 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
           </View>
           <View style={[styles.summaryCard, { backgroundColor: COLORS.savingsBg }]}>
             <Text style={[styles.summaryLabel, { color: COLORS.savings }]}>SAVINGS</Text>
-            <Text style={[styles.summaryAmt, { color: COLORS.savings }]}>{fmt(sav)}</Text>
+            <Text style={[styles.summaryAmt, { color: COLORS.savings }]}>{fmt(savings)}</Text>
           </View>
         </View>
       </View>
@@ -153,23 +200,21 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
           <View key={day} style={styles.dayGroup}>
             <Text style={styles.dayLabel}>{day}</Text>
             {byDay[day].map((e, i) => {
-              const icon = e.subcat ? (CAT_ICONS[e.subcat] || '💸') : (e.cat === 'needs' ? '🏠' : e.cat === 'wants' ? '🎉' : '💰');
-              const catBg = e.cat === 'needs' ? COLORS.needsBg : e.cat === 'wants' ? COLORS.wantsBg : COLORS.savingsBg;
-              const amtColor = e.cat === 'needs' ? COLORS.needs : e.cat === 'wants' ? COLORS.wants : COLORS.savings;
+              const meta = metaFor(e.cat);
               return (
                 <View key={i} style={styles.item}>
-                  <View style={[styles.itemIcon, { backgroundColor: catBg }]}>
-                    <Text style={{ fontSize: 18 }}>{icon}</Text>
+                  <View style={[styles.itemIcon, { backgroundColor: meta.bg }]}>
+                    <Text style={{ fontSize: 18 }}>{iconFor(e)}</Text>
                   </View>
                   <View style={styles.itemInfo}>
-                    <Text style={styles.itemName} numberOfLines={1}>{e.desc || e.subcat || e.cat}</Text>
+                    <Text style={styles.itemName} numberOfLines={1}>{e.desc || e.subcat || meta.label}</Text>
                     <Text style={styles.itemMeta}>
-                      {e.cat.charAt(0).toUpperCase() + e.cat.slice(1)}
+                      {meta.label}
                       {e.who !== 'Me' ? `  ·  ${e.who}` : ''}
                       {`  ·  ${e.date}`}
                     </Text>
                   </View>
-                  <Text style={[styles.itemAmt, { color: amtColor }]}>{fmt(e.amount)}</Text>
+                  <Text style={[styles.itemAmt, { color: meta.fg }]}>{fmt(e.amount)}</Text>
                 </View>
               );
             })}
@@ -183,74 +228,109 @@ export default function ExpensesScreen({ expenses, onRefresh, onAdd }) {
       </TouchableOpacity>
 
       {/* Modal */}
-      <Modal visible={modal} animationType="slide" transparent onRequestClose={() => { setModal(false); resetForm(); }}>
-        <View style={styles.modalOverlay}>
+      <Modal visible={modal} animationType="slide" transparent onRequestClose={closeModal}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           <View style={styles.modal}>
             <Text style={styles.modalTitle}>Add Expense</Text>
 
-            <Text style={styles.label}>DATE</Text>
-            <View style={styles.dateRow}>
-              <TouchableOpacity style={styles.dateArrowBtn} onPress={() => changeExpenseDay(-1)}>
-                <Text style={styles.dateArrow}>‹</Text>
-              </TouchableOpacity>
-              <Text style={styles.dateText}>
-                {isToday
-                  ? `Today, ${expenseDate.getDate()} ${MONTHS[expenseDate.getMonth()]}`
-                  : `${expenseDate.getDate()} ${MONTHS[expenseDate.getMonth()]} ${expenseDate.getFullYear()}`}
-              </Text>
-              <TouchableOpacity
-                style={[styles.dateArrowBtn, isToday && styles.dateArrowDisabled]}
-                onPress={() => changeExpenseDay(1)}
-                disabled={isToday}
-              >
-                <Text style={[styles.dateArrow, isToday && { color: COLORS.border }]}>›</Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.label}>AMOUNT (₹)</Text>
-            <TextInput style={[styles.input, { fontSize: 22 }]} keyboardType="numeric" placeholder="0" value={amount} onChangeText={setAmount} />
-
-            <Text style={styles.label}>DESCRIPTION</Text>
-            <TextInput style={styles.input} placeholder="e.g. Swiggy dinner" value={desc} onChangeText={setDesc} />
-
-            <Text style={styles.label}>CATEGORY</Text>
-            <View style={styles.pills}>
-              {['needs','wants','savings'].map(c => (
-                <TouchableOpacity key={c} style={[styles.pill, cat === c && { backgroundColor: c === 'needs' ? COLORS.needsBg : c === 'wants' ? COLORS.wantsBg : COLORS.savingsBg, borderColor: c === 'needs' ? COLORS.needs : c === 'wants' ? COLORS.wants : COLORS.savings }]} onPress={() => { setCat(c); setSub(''); }}>
-                  <Text style={[styles.pillText, cat === c && { color: c === 'needs' ? COLORS.needs : c === 'wants' ? COLORS.wants : COLORS.savings }]}>
-                    {c === 'needs' ? '🏠 Needs' : c === 'wants' ? '🎉 Wants' : '💰 Savings'}
-                  </Text>
+            {/* The body scrolls: the form is taller than the sheet on a small
+                phone, which previously put the Save button out of reach. */}
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.modalBody}
+            >
+              <Text style={styles.label}>DATE</Text>
+              <View style={styles.dateRow}>
+                <TouchableOpacity style={styles.dateArrowBtn} onPress={() => changeExpenseDay(-1)} accessibilityLabel="Previous day">
+                  <Text style={styles.dateArrow}>‹</Text>
                 </TouchableOpacity>
-              ))}
-            </View>
+                <Text style={styles.dateText}>
+                  {isToday
+                    ? `Today, ${expenseDate.getDate()} ${MONTHS[expenseDate.getMonth()]}`
+                    : `${expenseDate.getDate()} ${MONTHS[expenseDate.getMonth()]} ${expenseDate.getFullYear()}`}
+                </Text>
+                <TouchableOpacity
+                  style={[styles.dateArrowBtn, isToday && styles.dateArrowDisabled]}
+                  onPress={() => changeExpenseDay(1)}
+                  disabled={isToday}
+                  accessibilityLabel="Next day"
+                >
+                  <Text style={[styles.dateArrow, isToday && { color: COLORS.border }]}>›</Text>
+                </TouchableOpacity>
+              </View>
 
-            {cat !== '' && (
-              <View style={styles.subcats}>
-                {SUBCATS[cat].map(s => (
-                  <TouchableOpacity key={s} style={[styles.subcat, sub === s && styles.subcatSelected]} onPress={() => setSub(s)}>
-                    <Text style={[styles.subcatText, sub === s && { color: COLORS.text }]}>{s}</Text>
+              <Text style={styles.label}>AMOUNT (₹)</Text>
+              <TextInput
+                style={[styles.input, { fontSize: 22 }]}
+                keyboardType="numeric"
+                placeholder="0"
+                placeholderTextColor={COLORS.text3}
+                value={amount}
+                onChangeText={setAmount}
+              />
+
+              <Text style={styles.label}>DESCRIPTION</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. Swiggy dinner"
+                placeholderTextColor={COLORS.text3}
+                value={desc}
+                onChangeText={setDesc}
+              />
+
+              <Text style={styles.label}>CATEGORY</Text>
+              <View style={styles.pills}>
+                {Object.keys(CAT_META).map(c => {
+                  const meta = CAT_META[c];
+                  const selected = cat === c;
+                  return (
+                    <TouchableOpacity
+                      key={c}
+                      style={[styles.pill, selected && { backgroundColor: meta.bg, borderColor: meta.fg }]}
+                      onPress={() => { setCat(c); setSub(''); }}
+                    >
+                      <Text style={[styles.pillText, selected && { color: meta.fg }]}>{meta.pill}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {cat !== '' && (
+                <View style={styles.subcats}>
+                  {SUBCATS[cat].map(s => (
+                    <TouchableOpacity key={s} style={[styles.subcat, sub === s && styles.subcatSelected]} onPress={() => setSub(s)}>
+                      <Text style={[styles.subcatText, sub === s && { color: COLORS.text }]}>{s}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              <Text style={styles.label}>PAID BY</Text>
+              <View style={styles.pills}>
+                {['Me','Wife','Joint'].map(w => (
+                  <TouchableOpacity key={w} style={[styles.pill, who === w && { backgroundColor: COLORS.accentLight, borderColor: COLORS.accent }]} onPress={() => setWho(w)}>
+                    <Text style={[styles.pillText, who === w && { color: COLORS.accent }]}>{w}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
-            )}
 
-            <Text style={styles.label}>PAID BY</Text>
-            <View style={styles.pills}>
-              {['Me','Wife','Joint'].map(w => (
-                <TouchableOpacity key={w} style={[styles.pill, who === w && { backgroundColor: COLORS.accentLight, borderColor: COLORS.accent }]} onPress={() => setWho(w)}>
-                  <Text style={[styles.pillText, who === w && { color: COLORS.accent }]}>{w}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <TouchableOpacity style={[styles.saveBtn, saving && { opacity: 0.6 }]} onPress={handleSave} disabled={saving}>
-              {saving ? <ActivityIndicator color="white" /> : <Text style={styles.saveBtnText}>Save to Google Sheet</Text>}
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => { setModal(false); resetForm(); }}>
-              <Text style={styles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.saveBtn, saving && { opacity: 0.6 }]}
+                onPress={handleSave}
+                disabled={saving}
+              >
+                {saving ? <ActivityIndicator color="white" /> : <Text style={styles.saveBtnText}>Save to Google Sheet</Text>}
+              </TouchableOpacity>
+              <TouchableOpacity onPress={closeModal}>
+                <Text style={styles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -286,8 +366,9 @@ const styles = StyleSheet.create({
   addBtn: { position: 'absolute', bottom: 24, alignSelf: 'center', backgroundColor: COLORS.accent, borderRadius: 50, paddingVertical: 14, paddingHorizontal: 28, shadowColor: COLORS.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 8, elevation: 6 },
   addBtnText: { color: 'white', fontSize: 15, fontWeight: '700' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modal: { backgroundColor: COLORS.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, maxHeight: '90%' },
-  modalTitle: { fontSize: 17, fontWeight: '700', color: COLORS.text, textAlign: 'center', marginBottom: 18 },
+  modal: { backgroundColor: COLORS.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 20, paddingHorizontal: 20, paddingBottom: 24, maxHeight: '90%', flexShrink: 1 },
+  modalTitle: { fontSize: 17, fontWeight: '700', color: COLORS.text, textAlign: 'center', marginBottom: 14 },
+  modalBody: { paddingBottom: 4 },
   label: { fontSize: 11, fontWeight: '700', color: COLORS.text2, letterSpacing: 0.6, marginBottom: 6, marginTop: 4 },
   input: { borderWidth: 1.5, borderColor: COLORS.border, borderRadius: 10, padding: 11, fontSize: 15, color: COLORS.text, backgroundColor: COLORS.bg, marginBottom: 10 },
   dateRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1.5, borderColor: COLORS.border, borderRadius: 10, backgroundColor: COLORS.bg, marginBottom: 10, overflow: 'hidden' },
