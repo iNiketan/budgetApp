@@ -1,134 +1,139 @@
-# Family Budget
+# Family budget
 
-A shared family expense tracker for Android. Two users log daily expenses that sync to a Google Sheet via Google Apps Script.
+A shared family expense tracker for Android. Two users log daily expenses that sync to a Google Sheet using Google Apps Script.
 
 ## Features
 
-- **PIN lock** — 4-digit screen lock on app open, with escalating lockout after repeated wrong entries
-- **Expense log** — add expenses with amount, description, category, subcategory, and who paid
-- **Month navigation** — browse expenses by month with a grouped daily view
-- **50/30/20 overview** — proportional donut of the Needs / Wants / Savings split, plus a monthly income tracker and a savings target bar
-- **6-month trend** — bar chart of monthly spending
-- **Auto-sync** — refreshes every 60 seconds from Google Sheets, with pull-to-refresh
-- **Explicit sync state** — the status bar shows the real reason a sync failed instead of a generic "offline?"
+- PIN lock. Four digit screen lock on open, with escalating lockout after repeated wrong entries.
+- Expense log. Add expenses with amount, description, category, subcategory, and payer.
+- Input sanitization. Sanitizes spreadsheet formula prefixes to prevent cell formula execution in Google Sheets.
+- Bounds validation. Enforces amount ceilings and description length limits to prevent sheet corruption.
+- Month navigation. Browse expenses by month with a grouped daily view.
+- 50/30/20 overview. Proportional donut chart of the Needs, Wants, and Savings split, with monthly income tracking and a savings target bar.
+- Six month trend. Bar chart of monthly spending.
+- Auto sync. Refreshes every 60 seconds from Google Sheets, with pull to refresh.
+- Explicit sync state. The status bar displays the exact backend error instead of a generic offline label.
 
-## Tech Stack
+## Tech stack
 
 | Layer | Tech |
 |---|---|
 | Framework | React Native (Expo SDK 57) |
+| Core | React 19.2, React Native 0.86 |
 | Navigation | React Navigation 6 (Bottom Tabs) |
 | Charts | react-native-svg |
 | Local storage | AsyncStorage |
 | Backend | Google Apps Script Web App |
 | Database | Google Sheets |
-| Build | EAS Build (Expo Cloud) |
-| Tests | Jest + jest-expo |
+| Build system | EAS Build (Expo Cloud) |
+| Test suite | Jest and jest-expo |
 
-## Project Structure
+## Project structure
 
 ```
 budgetApp/
 ├── App.js                       # Root: PIN gate, expense state, sync loop
-├── babel.config.js
+├── app.json                     # Expo configuration and plugin settings
+├── eas.json                     # EAS build profiles (APK preview, production)
+├── INSTALL_APK_GUIDE.md         # Step by step installation and ADB guide
 ├── src/
 │   ├── constants.js             # Config, validation, colors, categories
-│   ├── api.js                   # Google Sheets API: fetch + save
-│   ├── summary.js               # Pure budget math (unit-tested)
+│   ├── api.js                   # Google Sheets API: fetch, save, sanitization
+│   ├── summary.js               # Budget math (unit tested)
 │   └── screens/
-│       ├── PinScreen.js         # PIN lock with lockout
-│       ├── ExpensesScreen.js    # Tab 1 — expense list + add modal
-│       └── OverviewScreen.js    # Tab 2 — donut, savings, trend
+│       ├── PinScreen.js         # PIN lock with persisted lockout
+│       ├── ExpensesScreen.js    # Expense list and entry modal
+│       └── OverviewScreen.js    # Donut chart, savings, trend
 ├── __tests__/
-│   └── summary.test.js
+│   ├── summary.test.js          # Budget calculations and date handling
+│   └── security.test.js         # Formula injection defense tests
 └── scripts/
-    └── purge-git-history.sh     # One-off: scrub leaked secrets from history
+    └── purge-git-history.sh     # Scrub leaked secrets from git history
 ```
 
 ## Setup
 
-1. Clone the repo
+1. Clone the repository.
 
-2. Install dependencies
-   ```
+2. Install dependencies:
+   ```bash
    npm install
    ```
 
-3. Create a `.env` file from the template and lock it down:
-   ```
+3. Create `.env` from the template:
+   ```bash
    cp .env.example .env && chmod 600 .env
    ```
 
-4. Fill in your values in `.env`:
-   ```
+4. Populate `.env`:
+   ```bash
    EXPO_PUBLIC_SHEET_URL=https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec
    EXPO_PUBLIC_PASSWORD=your-api-password
    EXPO_PUBLIC_PIN=0000
    ```
 
-5. Start the dev server
-   ```
-   npx expo start --tunnel
+5. Start the development server for Expo Go:
+   ```bash
+   npx expo start -c
    ```
 
 ## Tests
 
+Run the test suite:
 ```bash
 npm test
 ```
 
-Covers the money math in `src/summary.js` — how expenses are bucketed into
-Needs / Wants / Savings, what counts as *spent* versus *saved*, month
-arithmetic across year boundaries, and the 6-month trend. `summary.js` has no
-React or React Native imports, which is what makes it testable in isolation.
+Twenty-six unit tests cover:
+- Money math in `src/summary.js`: category splits, income math, savings progress, month boundaries, and rolling trend calculations.
+- Security in `src/api.js`: spreadsheet formula injection neutralization (`=`, `+`, `-`, `@`, `\t`) and clean round-trip unescaping.
 
-The money math is worth testing specifically because the same numbers drive the
-savings hero card and the donut, and a regression there is silent — the app
-still renders, it just lies.
+## Building the standalone APK
 
-## Build APK
+Do not compile native Android code locally if your machine has limited resources. Use EAS Cloud:
 
-```bash
-eas build -p android --profile preview
-```
+1. Push your environment variables to EAS Cloud once:
+   ```bash
+   npx eas-cli env:push preview --path .env --force
+   ```
+   Git ignores `.env` for security. Pushing variables to EAS allows cloud workers to compile the APK with your configuration without committing secrets to GitHub.
 
-Rebuild after **any** change, including `.env` changes.
+2. Run the build:
+   ```bash
+   npx eas-cli build --platform android --profile preview
+   ```
 
-## Environment Variables
+3. Download the finished APK using the link or QR code printed in the terminal. Detailed USB and ADB instructions are in [INSTALL_APK_GUIDE.md](INSTALL_APK_GUIDE.md).
+
+## Resolved build and runtime issues
+
+- **Expo Go version mismatch.** Upgraded the project from SDK 54 to SDK 57 (`react-native` 0.86.3, `react` 19.2.3) so the project runs directly in the latest Expo Go client from Google Play.
+- **Missing credentials in cloud builds.** Cloud builds previously failed on launch with a configuration error because `.env` is gitignored. Resolved by uploading project variables to EAS Cloud with `eas env:push`.
+- **Package signature conflicts on install.** Devices with multiple profiles (work profiles, cloned apps, second space) retain older package signatures after personal uninstalls. Resolved by targeting and removing package residue across specific user IDs with `adb shell pm uninstall --user <id>`.
+- **Spreadsheet formula injection.** Resolved by sanitizing cell inputs that start with formula operators before dispatching the POST payload to Google Sheets.
+- **Local compilation strain.** Resolved by offloading Android builds to EAS Cloud workers rather than compiling locally via Gradle.
+
+## Environment variables
 
 | Variable | Description |
 |---|---|
-| `EXPO_PUBLIC_SHEET_URL` | Google Apps Script deployment URL (must be `https://`) |
-| `EXPO_PUBLIC_PASSWORD` | API password for the backend |
-| `EXPO_PUBLIC_PIN` | 4-digit app unlock PIN |
+| `EXPO_PUBLIC_SHEET_URL` | Google Apps Script deployment URL. Must begin with `https://`. |
+| `EXPO_PUBLIC_PASSWORD` | API password for backend requests. |
+| `EXPO_PUBLIC_PIN` | Four digit unlock PIN. |
 
-`.env` is gitignored and should be `chmod 600`. Never commit it.
+Keep `.env` restricted with `chmod 600` and never commit it to source control.
 
 ## Security
 
-Read **[SECURITY.md](SECURITY.md)** before assuming the PIN protects the data.
+Read [SECURITY.md](SECURITY.md) before relying on the PIN.
 
-The short version: Expo inlines every `EXPO_PUBLIC_*` value into the JS bundle
-at build time, so **the sheet URL, the API password and the PIN are all
-recoverable in plain text from a built APK**. The PIN is a convenience lock
-against someone picking up an unlocked phone — it is not data protection. The
-API password is the real credential, and it grants full read/write access to
-the sheet.
+Expo inlines `EXPO_PUBLIC_*` values into the JavaScript bundle at build time. The sheet URL, the API password, and the PIN are recoverable in plain text from any compiled APK. The PIN stops someone holding an unlocked phone from viewing logs, but does not provide database encryption. The API password controls read and write access to the underlying spreadsheet.
 
-If the credentials have ever been committed to this repository, they must be
-treated as permanently public and rotated. See `scripts/purge-git-history.sh`.
+## Known limitations
 
-## Known Limitations
-
-- **No delete or edit.** A mistake can only be corrected by editing the Sheet
-  directly. `fetchExpenses` keeps negative amounts so a correction entry is at
-  least possible.
-- **No offline queue.** A save with no connectivity fails with an error; the
-  expense is not queued for later.
-- **No pagination.** All expenses are fetched in a single call, which will get
-  slow past roughly a thousand rows.
-- **Overview always shows the current month** — unlike the Expenses tab, it has
-  no month selector yet.
-- **Month is 0-indexed** in the Sheet (January = 0), matching JS `Date.getMonth()`.
-- **Apps Script needs a new deployment version** for backend changes to take
-  effect; a plain Save does nothing.
+- **No delete or edit in app.** Mistakes must be edited in the Google Sheet directly. `fetchExpenses` preserves negative amounts so correction entries are possible.
+- **No offline queue.** Network failures abort the write; the app does not cache entries offline for retry.
+- **Single query fetch.** All rows load in one request, which slows down as the sheet grows beyond several thousand rows.
+- **Overview month view.** The Overview tab displays the current calendar month and does not contain a month picker.
+- **Zero indexed months.** Google Sheets stores months 0-indexed (January = 0), matching `Date.prototype.getMonth()`.
+- **Apps Script deployments.** Backend changes require creating a new deployment version in the Apps Script editor; saving the script alone does not publish updates.
