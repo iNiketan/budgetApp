@@ -14,6 +14,18 @@ A shared family expense tracker for Android. Two users record daily expenses tha
 - Automatic sync. Polls every 60 seconds from Google Sheets, with pull to refresh support.
 - Explicit sync state. The status bar displays the exact backend error instead of a generic offline label.
 
+## App flow
+
+| PIN lock | Empty state | Add expense | Expenses list | Budget overview |
+|---|---|---|---|---|
+| <img src="assets/appimg1.jpg" width="180" alt="PIN lock screen" /> | <img src="assets/appimg2.jpg" width="180" alt="Empty expenses screen" /> | <img src="assets/appimg5.jpg" width="180" alt="Add expense sheet" /> | <img src="assets/appimg3.jpg" width="180" alt="Populated expenses list" /> | <img src="assets/appimg4.jpg" width="180" alt="Budget overview screen" /> |
+
+1. PIN lock: Enter the four-digit PIN to open the app. Successive invalid entries trigger escalating lockout delays.
+2. Month view: Browse monthly expense history. An empty state prompts for the first entry when no records exist.
+3. Add expense: Open the bottom entry sheet to input amounts, add descriptions, select categories, and attribute payers.
+4. Expenses list: Review logged entries organized by day alongside real-time Google Sheets sync status.
+5. Budget overview: Track 50/30/20 budget allocations, progress toward monthly savings goals, and six-month spending trends.
+
 ## Tech stack
 
 | Layer | Technology |
